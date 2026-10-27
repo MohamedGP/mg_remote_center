@@ -503,7 +503,7 @@ $('#showCodeBtn').onclick=()=>{
   else alert('كود الزرار (' + b.label + '):\n\n' + b.code);
 };
 
-$('#changeImgBtn').onclick=>$('#changeFileImg').click();
+$('#changeImgBtn').onclick = () => $('#changeFileImg').click();
 $('#changeFileImg').onchange=async e=>{
   const f = e.target.files[0]; if(!f) return;
   const img = await shrink(f);
