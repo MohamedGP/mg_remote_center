@@ -11,11 +11,11 @@
 body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,"Segoe UI",Tahoma,sans-serif}
 header{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;direction:ltr;gap:8px;padding:10px 14px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--bg);z-index:5}
 .hl{justify-self:start;position:relative}
-.hr{justify-self:end;direction:rtl;display:flex;align-items:center;font-size:14px}
+.hr{justify-self:end;direction:rtl;display:flex;align-items:center;gap:6px;font-size:14px}
 .ttl{font-weight:800;font-size:22px;letter-spacing:.5px;text-align:center}
 .ttl b{color:var(--acc)}
 .ttl span{color:var(--mut);font-weight:600}
-button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 14px;cursor:pointer}
+button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px;cursor:pointer}
 button.pri{background:var(--acc);border-color:var(--acc)}
 button.bad{color:var(--bad)}
 #gear{font-size:20px;padding:4px 11px;line-height:1.3}
@@ -23,7 +23,7 @@ button.bad{color:var(--bad)}
 #menu button{display:block;width:100%;border:0;border-radius:0;text-align:right;padding:12px 16px;background:none}
 #menu button+button{border-top:1px solid var(--line)}
 #menu button:hover{background:#2a3038}
-.dot{width:10px;height:10px;border-radius:50%;background:var(--bad);display:inline-block;margin-inline-end:6px}
+.dot{width:10px;height:10px;border-radius:50%;background:var(--bad);display:inline-block;margin-inline-end:4px}
 .dot.on{background:var(--ok)}
 main{max-width:900px;margin:0 auto;padding:16px}
 #q{width:100%;padding:11px 14px;margin-bottom:14px;font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:10px;outline:none}
@@ -69,8 +69,8 @@ main{max-width:900px;margin:0 auto;padding:16px}
   </div>
   <div class="ttl"><b>MG </b> <span>Remote Center</span></div>
   <div class="hr">
-    <button class="pri" id="conn"><i class="dot"></i>اتصال أردوينو</button>
-    <span id="ok" hidden><i class="dot on"></i>متصل</span>
+    <button id="connSerial"><i class="dot" id="dotSerial"></i>USB</button>
+    <button class="pri" id="connBt"><i class="dot" id="dotBt"></i>بلوتوث</button>
   </div>
 </header>
 
@@ -155,7 +155,11 @@ main{max-width:900px;margin:0 auto;padding:16px}
 <script>
 const $=s=>document.querySelector(s);
 let db=[];
-let cur=null,edit=false,sel=null,learn=null,port=null,writer=null;
+let cur=null,edit=false,sel=null,learn=null;
+
+// متغيرات الاتصال (USB Serial & Web Bluetooth معاً)
+let usbPort=null, usbWriter=null;
+let btDevice=null, btServer=null, btChar=null, btBuf='';
 
 let lastShape = 'circle';
 let lastWidth = 38;
@@ -272,21 +276,25 @@ $('#importFile').onchange=e=>{
   reader.readAsText(f); e.target.value='';
 };
 
-/* Serial connection */
-function setConn(on){$('#conn').hidden=on;$('#ok').hidden=!on;if(!on){writer=null;port=null}}
-async function connect(){
-  if(!('serial' in navigator)){alert('استخدم متصفح كروم أو إيدج للاتصال بالأردوينو');return}
+/* --- 1. الاتصال بالكابل (USB Serial) --- */
+async function connectSerial(){
+  if(!('serial' in navigator)){alert('متصفحك لا يدعم USB Serial');return;}
   try{
-    port=await navigator.serial.requestPort();
-    await port.open({baudRate:115200});
-    writer=port.writable.getWriter();
-    setConn(true); readLoop();
-  }catch(e){setConn(false);alert('تعذر الاتصال بالأردوينو.')}
+    usbPort = await navigator.serial.requestPort();
+    await usbPort.open({baudRate:115200});
+    usbWriter = usbPort.writable.getWriter();
+    $('#dotSerial').classList.add('on');
+    readSerialLoop();
+  }catch(e){
+    usbWriter = null; usbPort = null;
+    $('#dotSerial').classList.remove('on');
+    alert('تعذر الاتصال بكابل الـ USB.');
+  }
 }
-async function readLoop(){
-  const dec=new TextDecoderStream();
-  port.readable.pipeTo(dec.writable).catch(()=>{});
-  const rd=dec.readable.getReader();
+async function readSerialLoop(){
+  const dec = new TextDecoderStream();
+  usbPort.readable.pipeTo(dec.writable).catch(()=>{});
+  const rd = dec.readable.getReader();
   let buf='';
   try{
     for(;;){
@@ -297,21 +305,67 @@ async function readLoop(){
       while((i=buf.indexOf('\n'))>=0){onLine(buf.slice(0,i).trim());buf=buf.slice(i+1)}
     }
   }catch(e){}
-  setConn(false);
+  usbWriter = null; usbPort = null;
+  $('#dotSerial').classList.remove('on');
 }
+if('serial' in navigator) navigator.serial.addEventListener('disconnect',()=>{$('#dotSerial').classList.remove('on'); usbWriter=null;});
+$('#connSerial').onclick = connectSerial;
+
+/* --- 2. الاتصال بالبلوتوث (Web Bluetooth) --- */
+const UART_UUID = '0000ffe0-0000-1000-8000-00805f9b34fb';
+const CHAR_UUID = '0000ffe1-0000-1000-8000-00805f9b34fb';
+
+async function connectBt(){
+  if(!('bluetooth' in navigator)){alert('متصفحك لا يدعم البلوتوث');return;}
+  try{
+    btDevice = await navigator.bluetooth.requestDevice({acceptAllDevices:true, optionalServices:[UART_UUID]});
+    btDevice.addEventListener('gattserverdisconnected', ()=>{$('#dotBt').classList.remove('on'); btChar=null;});
+    btServer = await btDevice.gatt.connect();
+    const service = await btServer.getPrimaryService(UART_UUID);
+    btChar = await service.getCharacteristic(CHAR_UUID);
+    await btChar.startNotifications();
+    btChar.addEventListener('characteristicvaluechanged', e=>{
+      const val = new TextDecoder().decode(e.target.value);
+      btBuf += val;
+      let i;
+      while((i=btBuf.indexOf('\n'))>=0){onLine(btBuf.slice(0,i).trim()); btBuf=btBuf.slice(i+1);}
+    });
+    $('#dotBt').classList.add('on');
+  }catch(e){
+    btChar = null; btServer = null; btDevice = null;
+    $('#dotBt').classList.remove('on');
+    alert('تعذر الاتصال بالبلوتوث.');
+  }
+}
+$('#connBt').onclick = connectBt;
+
+/* استقبال الأكواد (سواء وصل عن طريق الكابل أو البلوتوث) */
 function onLine(l){
-  if(learn&&l.startsWith('RX,')&&!l.startsWith('RX,UNKNOWN')){
+  if(learn && l.startsWith('RX,') && !l.startsWith('RX,UNKNOWN')){
     const f=learn; learn=null; f(l);
   }
 }
+
+/* دالة الإرسال المزدوج (تبعت عبر الكابل لو متوصل، أو عبر البلوتوث لو متوصل) */
 async function send(code){
   if(!code){alert('هذا الزرار ليس له كود مسجل!');return false}
-  if(!writer){alert('يرجى توصيل الأردوينو أولاً');return false}
-  await writer.write(new TextEncoder().encode(code+'\n'));
+  let sent = false;
+  
+  if(usbWriter){
+    await usbWriter.write(new TextEncoder().encode(code+'\n'));
+    sent = true;
+  }
+  if(btChar){
+    await btChar.writeValue(new TextEncoder().encode(code+'\n'));
+    sent = true;
+  }
+
+  if(!sent){
+    alert('يرجى توصيل الأردوينو إما عبر كابل الـ USB أو البلوتوث أولاً!');
+    return false;
+  }
   return true;
 }
-if('serial' in navigator)navigator.serial.addEventListener('disconnect',()=>setConn(false));
-$('#conn').onclick=connect;
 
 function renderList(){
   const q=$('#q').value.trim().toLowerCase();
@@ -462,7 +516,7 @@ function selectKey(id){
     lastHeight = b.h||38;
 
     if(edit){
-      if(!writer){ msg('وصّل الأردوينو أولاً'); return; }
+      if(!usbWriter && !btChar){ msg('وصّل الأردوينو بالكابل أو البلوتوث أولاً'); return; }
       learn=code=>{
         b.code=code; save();
         msg('✅ تم التقاط الكود للزرار ('+b.label+'): '+code);
