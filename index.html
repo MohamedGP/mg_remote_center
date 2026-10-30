@@ -36,7 +36,9 @@ main{max-width:900px;margin:0 auto;padding:16px}
 .bar h2{margin:0;font-size:18px}
 
 .editor-layout{display:flex;gap:16px;justify-content:center;align-items:flex-start;position:relative}
-.stage{position:relative;width:300px;min-height:500px;background:#111;user-select:none;touch-action:none;flex-shrink:0;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+.stage{position:relative;width:300px;min-height:500px;background:#111;user-select:none;flex-shrink:0;border-radius:10px;overflow:hidden;border:1px solid var(--line)}
+/* في وضع التعديل فقط نمنع اللمس الافتراضي لكي لا يتعارض مع سحب الأزرار */
+.stage.edit{touch-action:none}
 .stage img{width:100%;display:block;pointer-events:none}
 
 #selbar{display:flex;flex-direction:column;gap:8px;background:var(--card);border:1px solid var(--line);padding:12px;border-radius:12px;width:200px;box-shadow:0 8px 24px rgba(0,0,0,.6);position:sticky;top:70px}
@@ -216,12 +218,12 @@ $('#btnAddRemote').onclick=()=>{
       const f = e.target.files[0]; if(!f) return;
       const img = await shrink(f);
       const r = {id:uid(), name, img, buttons:[]};
-      db.push(r); save(); openRemote(r.id, true);
+      db.push(r); save(); openRemote(r.id, true, true);
     };
     inp.click();
   } else {
     const r = {id:uid(), name, img:'', buttons:[]};
-    db.push(r); save(); openRemote(r.id, true);
+    db.push(r); save(); openRemote(r.id, true, true);
   }
 };
 
@@ -241,7 +243,7 @@ $('#selectRemoteCancel').onclick=()=>{$('#selectRemoteModal').hidden=true};
 $('#selectRemoteOk').onclick=()=>{
   const id = $('#remoteSelect').value;
   $('#selectRemoteModal').hidden=true;
-  if(id) openRemote(id, true);
+  if(id) openRemote(id, true, true);
 };
 
 $('#mExport').onclick=()=>{
@@ -323,7 +325,7 @@ function renderList(){
     if(r.img) c.querySelector('img').src=r.img;
     else c.querySelector('img').style.background='#222';
     c.querySelector('div').textContent=r.name;
-    c.onclick=()=>openRemote(r.id, false);
+    c.onclick=()=>openRemote(r.id, false, true);
     g.appendChild(c);
   });
   $('#listmsg').textContent=!db.length?'لا توجد ريموتات مضافة.':(!items.length?'لا توجد نتائج مطابقة':'');
@@ -343,11 +345,31 @@ function shrink(file){
   });
 }
 
-function openRemote(id, startEdit){
+function openRemote(id, startEdit, pushHistory = false){
   cur=db.find(r=>r.id===id); edit=!!startEdit; sel=null; learn=null;
   $('#list').hidden=true; $('#remote').hidden=false;
   $('#rname').textContent=cur.name;
+  
+  if (pushHistory) {
+    history.pushState({remoteOpen: true}, '', '');
+  }
+  
   renderRemote();
+}
+
+window.onpopstate = function(event) {
+  if (!$('#remote').hidden) {
+    closeRemoteToHome(false);
+  }
+};
+
+function closeRemoteToHome(pop = true) {
+  learn=null; cur=null; edit=false;
+  $('#remote').hidden=true; $('#list').hidden=false;
+  renderList();
+  if (pop && history.state && history.state.remoteOpen) {
+    history.back();
+  }
 }
 
 function renderRemote(){
@@ -531,13 +553,11 @@ $('#delKey').onclick=()=>{
 
 $('#delRemote').onclick=()=>{
   if(!confirm('هل تريد حذف هذا الريموت بالكامل؟')) return;
-  db=db.filter(r=>r!==cur); save(); $('#back').click();
+  db=db.filter(r=>r!==cur); save(); closeRemoteToHome();
 };
 
 $('#back').onclick=()=>{
-  learn=null; cur=null; edit=false;
-  $('#remote').hidden=true; $('#list').hidden=false;
-  renderList();
+  closeRemoteToHome();
 };
 
 loadRemotesData();
